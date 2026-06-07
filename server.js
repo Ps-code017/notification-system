@@ -2,10 +2,13 @@ import express from 'express';
 import config from './src/config/index.js';
 import logger from './src/utils/logger.js';
 import pool from './src/db/postgres.js';
+import notificationRoutes from './src/api/routes/notification.routes.js';
 
 const app = express();
 
 app.use(express.json());
+
+app.use('/api/notifications', notificationRoutes);
 
 app.get('/health', async(req, res) => {
   // res.json({ status: 'ok' });
