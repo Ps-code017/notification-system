@@ -2,12 +2,12 @@ import pkg from "kafkajs";
 import config from "../config/index.js";
 import logger from "../utils/logger.js";
 
-const Kafka=new pkg.Kafka({
+const kafka=new pkg.Kafka({
     clientId:'notification-system',
     brokers: [config.kafka.broker],
 })
 
-const producer=Kafka.producer();
+const producer=kafka.producer();
 
 let isProducerConnected=false;
 
@@ -45,5 +45,5 @@ const disconnectProducer=async()=>{
 export default {
     publishNotification,
     disconnectProducer,
-    Kafka,
+    kafka,
 }

@@ -6,7 +6,9 @@
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
-    "migrate":"node src/db/migrate.js"
+    "migrate":"node src/db/migrate.js",
+    "worker:email":"node src/workers/email.worker.js",
+    "worker:email:dev" : "nodemon src/workers/email.worker.js"
   },
   "type": "module",
   "keywords": [],
