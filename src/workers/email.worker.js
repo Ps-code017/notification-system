@@ -1,5 +1,6 @@
 import kafkaService from "../services/kafka.service.js";
 import emailService from "../services/email.service.js";
+import redisService from "../services/redis.service.js";
 import pool from "../db/postgres.js";
 import logger from "../utils/logger.js";
 
@@ -12,6 +13,12 @@ const processNotification=async(notificationData)=>{
 
     if(!channels.includes('email')){
         logger.info(`Notification ${notificationId} does not require email delivery. Skipping.`);
+        return;
+    }
+
+    const duplicate=await redisService.isDuplicate(notificationId,'email');
+    if(duplicate){
+        logger.info(`Duplicate notification ${notificationId} for email channel detected. Skipping processing.`);
         return;
     }
 
@@ -78,6 +85,8 @@ const processNotification=async(notificationData)=>{
         }
 
         await client.query('COMMIT');
+        await redisService.markAsProcessed(notificationId,'email');
+        
         logger.info(`Notification ${notificationId} processed successfully for email delivery.`);
 
     }catch(err){
