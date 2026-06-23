@@ -3,10 +3,8 @@ import notificationService from '../../services/notification.service.js';
 import logger from '../../utils/logger.js';
 
 const router = Router();
-// POST /api/notifications
+
 router.post('/', async (req, res) => {
-
-
   const { userId, type, title, message } = req.body;
 
   if (!userId || !type || !title || !message) {
@@ -31,6 +29,17 @@ router.post('/', async (req, res) => {
   } catch (err) {
     logger.error(`POST /api/notifications failed: ${err.message}`);
 
+    if (err.isRateLimit) {
+      const maxResetsIn = Math.max(
+        ...err.blockedChannels.map(c => c.resetsIn || 0)
+      );
+      res.set('Retry-After', maxResetsIn);
+      return res.status(429).json({
+        error: err.message,
+        retryAfter: maxResetsIn,
+      });
+    }
+
     if (err.message.includes('not found')) {
       return res.status(404).json({ error: err.message });
     }
@@ -43,7 +52,6 @@ router.post('/', async (req, res) => {
   }
 });
 
-// GET /api/notifications/:id
 router.get('/:id', async (req, res) => {
   const { id } = req.params;
 

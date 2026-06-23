@@ -3,12 +3,14 @@ import config from './src/config/index.js';
 import logger from './src/utils/logger.js';
 import pool from './src/db/postgres.js';
 import notificationRoutes from './src/api/routes/notification.routes.js';
+import userRoutes from './src/api/routes/user.routes.js';
 
 const app = express();
 
 app.use(express.json());
 
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/users',userRoutes);
 
 app.get('/health', async(req, res) => {
   // res.json({ status: 'ok' });

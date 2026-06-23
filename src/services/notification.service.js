@@ -1,17 +1,15 @@
 import pool from '../db/postgres.js';
 import kafkaService from './kafka.service.js';
+import redisService from './redis.service.js';
 import logger from '../utils/logger.js';
 
 const createNotification = async ({ userId, type, title, message }) => {
-
   const client = await pool.connect();
 
   try {
-    
     const userResult = await client.query(
-      `SELECT id, email_enabled, sms_enabled, push_enabled 
-       FROM users 
-       WHERE id = $1`,
+      `SELECT id, email_enabled, sms_enabled, push_enabled
+       FROM users WHERE id = $1`,
       [userId]
     );
 
@@ -21,7 +19,7 @@ const createNotification = async ({ userId, type, title, message }) => {
 
     const user = userResult.rows[0];
 
-    
+
     const channels = [];
     if (user.email_enabled) channels.push('email');
     if (user.sms_enabled) channels.push('sms');
@@ -31,12 +29,29 @@ const createNotification = async ({ userId, type, title, message }) => {
       throw new Error(`User ${userId} has no notification channels enabled`);
     }
 
-    logger.info(`User ${userId} has channels enabled: ${channels.join(', ')}`);
+    const rateLimitResults = await Promise.all(
+      channels.map(async (channel) => {
+        const result = await redisService.checkRateLimit(userId, channel);
+        return { channel, ...result };
+      })
+    );
+
+    const blockedChannels = rateLimitResults.filter(r => !r.allowed);
+
+    if (blockedChannels.length > 0) {
+      const details = blockedChannels.map(c =>
+        `${c.channel} (resets in ${c.resetsIn}s)`
+      ).join(', ');
+
+      throw Object.assign(
+        new Error(`Rate limit exceeded for channels: ${details}`),
+        { isRateLimit: true, blockedChannels }
+      );
+    }
 
 
     await client.query('BEGIN');
 
-    
     const notifResult = await client.query(
       `INSERT INTO notifications (user_id, type, title, message, status)
        VALUES ($1, $2, $3, $4, 'pending')
@@ -47,21 +62,22 @@ const createNotification = async ({ userId, type, title, message }) => {
     const notification = notifResult.rows[0];
     logger.info(`Notification row created: ${notification.id}`);
 
-    
     for (const channel of channels) {
       await client.query(
         `INSERT INTO delivery_attempts (notification_id, channel, status)
          VALUES ($1, $2, 'pending')`,
         [notification.id, channel]
       );
-      logger.info(`Delivery attempt created for channel: ${channel}`);
     }
 
     await client.query('COMMIT');
-    
     logger.info(`Transaction committed for notification: ${notification.id}`);
 
-   
+    await Promise.all(
+      channels.map(channel => redisService.incrementRateLimit(userId, channel))
+    );
+
+
     await kafkaService.publishNotification({
       notificationId: notification.id,
       userId,
@@ -74,17 +90,16 @@ const createNotification = async ({ userId, type, title, message }) => {
     return notification;
 
   } catch (err) {
-
-    
-    try {
-      await client.query('ROLLBACK');
-      logger.warn(`Transaction rolled back due to: ${err.message}`);
-    } catch (rollbackErr) {
-      
-      logger.error(`Rollback failed: ${rollbackErr.message}`);
+  
+    if (!err.isRateLimit) {
+      try {
+        await client.query('ROLLBACK');
+        logger.warn(`Transaction rolled back: ${err.message}`);
+      } catch (rollbackErr) {
+        logger.error(`Rollback failed: ${rollbackErr.message}`);
+      }
     }
 
-    
     throw err;
 
   } finally {
@@ -105,7 +120,7 @@ const getNotificationById = async (notificationId) => {
     }
 
     const attemptsResult = await pool.query(
-      `SELECT * FROM delivery_attempts 
+      `SELECT * FROM delivery_attempts
        WHERE notification_id = $1
        ORDER BY channel ASC`,
       [notificationId]

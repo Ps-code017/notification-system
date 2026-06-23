@@ -39,8 +39,78 @@ const markAsProcessed=async(notificationId,channel)=>{
     logger.info(`Marked notification ${notificationId} for channel ${channel} as processed in Redis : ${dedupKey}`);
 }
 
+const RATE_LIMIT_MAX=5;
+const RATE_LIMIT_WINDOW=3600; 
+
+const buildRateLimitKey=(userId,channel)=>{
+    return `rate_limit:${userId}:${channel}`;
+}
+
+const checkRateLimit=async(userId,channel)=>{
+    const rateLimitKey=buildRateLimitKey(userId,channel);
+   const current=await redis.get(rateLimitKey);
+   const currentCount=current?parseInt(current):0;
+
+    if(currentCount>=RATE_LIMIT_MAX){
+        const ttl=await redis.ttl(rateLimitKey);
+        logger.warn(`Rate limit exceeded for user ${userId} on channel ${channel}. Current count: ${currentCount}, TTL: ${ttl} seconds`);
+        
+        return {
+        allowed: false,
+        count: currentCount,
+        remaining: 0,
+        resetsIn: ttl,
+        };
+        return {
+            allowed: true,
+            count: currentCount,
+            remaining: RATE_LIMIT_MAX - currentCount,
+            resetsIn: null,
+        };
+    }  
+};
+
+const incrementRateLimit = async (userId, channel) => {
+  const key = buildRateLimitKey(userId, channel);
+
+  const newCount = await redis.incr(key);
+
+  if (newCount === 1) {
+    await redis.expire(key, RATE_LIMIT_WINDOW);
+    logger.info(
+      `Rate limit window started for user ${userId} on channel ${channel} — ` +
+      `window: ${RATE_LIMIT_WINDOW}s`
+    );
+  }
+
+  logger.info(
+    `Rate limit incremented for user ${userId} on channel ${channel} — ` +
+    `count: ${newCount}/${RATE_LIMIT_MAX}`
+  );
+
+  return newCount;
+};
+
+const getRateLimitStatus = async (userId, channel) => {
+  const key = buildRateLimitKey(userId, channel);
+  const current = await redis.get(key);
+  const ttl = await redis.ttl(key);
+  const currentCount = current ? parseInt(current) : 0;
+
+  return {
+    count: currentCount,
+    max: RATE_LIMIT_MAX,
+    remaining: Math.max(0, RATE_LIMIT_MAX - currentCount),
+    resetsIn: ttl > 0 ? ttl : null,
+    windowSeconds: RATE_LIMIT_WINDOW,
+  };
+};
+
 export default {
     redis,
     isDuplicate,
-    markAsProcessed
-}
+    markAsProcessed,
+    checkRateLimit,
+    incrementRateLimit,
+    getRateLimitStatus,
+}   
